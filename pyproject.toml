@@ -12,5 +12,6 @@ signal-spectrum = "signal_spectrum.cli:main"
 signal-spectrum-workbench = "signal_spectrum.workbench.cli:main"
 signal-waveform-fetch = "signal_spectrum.waveform.cli:main"
 signal-waveform-device = "signal_spectrum.waveform.device_cli:main"
+signal-excursions = "signal_spectrum.excursions.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]

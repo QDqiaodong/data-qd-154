@@ -88,6 +88,32 @@ PYTHONPATH=src python3 -m signal_spectrum.waveform.cli \
 - 离线演示（真实 TCP/HTTP，无 mock）：
   `PYTHONPATH=src python3 examples/waveform_fetch_demo.py`。
 
+## 越限检索档案（signal-excursions）
+
+新增独立子包 `signal_spectrum.excursions`：把一组已发布的完整波形包构建成不可变、
+自足的越限检索档案，长期离线查询测量值连续超限的极大样本段。不连接设备、不以
+`samples.ndjson` 为事实源、不改动源包与既有工作台。档案格式、索引与计数语义见
+[越限检索档案契约](docs/excursions-contract.md)。
+
+```sh
+# SOURCES.json：{"sources": [{"source_id": "s1", "package": "run/wave-pkg"}]}
+PYTHONPATH=src python3 -m signal_spectrum.excursions.cli build \
+  --sources SOURCES.json --archive run/exc-archive
+PYTHONPATH=src python3 -m signal_spectrum.excursions.cli query \
+  --archive run/exc-archive --source s1 --channel 0 \
+  --start 0 --stop 64 --op ge --threshold 0.5 --limit 10
+```
+
+- build 严格验真 schema_version=1 的 manifest（含 `meta_sha256` 自洽指纹）与
+  raw.bin 的长度/SHA256，按现有端序、交错与 scale/offset 语义流式标定为
+  binary64 快照；叶段 ≤256 样本、扇出 64 的持久区间摘要存于 SQLite。
+- query 只用档案（源包可删）：返回 `[start,stop)` 内全部极大连续命中段及
+  `peak_value`/`peak_index`（绝对样本索引），`--limit K` 给前 K 个完整段与
+  `has_more`；摘要可判定的整段不读逐点值，输出实际
+  `node_reads`/`leaf_reads`/`value_reads`。
+- 最多 32 个源包、合计 ≤1 GiB；build 与 query 峰值 RSS ≤192 MiB；成功退出 0，
+  非法输入、源校验、档案损坏/版本不支持或 I/O 失败退出 2。
+
 ## 当前能力和样例
 # Bounded one-sided real-signal spectrum v1
 
