@@ -1,0 +1,15 @@
+{
+  "sample_rate": 8,
+  "window": "rectangular",
+  "remove_mean": true,
+  "samples": [
+    0,
+    1,
+    0,
+    -1,
+    0,
+    1,
+    0,
+    -1
+  ]
+}
