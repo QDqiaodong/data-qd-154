@@ -53,6 +53,41 @@ cli.py 衔接数据链路。fixtures 为明确自制样例，代码与样例采�
 - 可运行的故障注入与恢复/重试演示：`PYTHONPATH=src python3 examples/workbench_recovery_demo.py`
   （测试钩子 `SIGSPECTRUM_WB_CRASH=after_commit|after_replace`）。
 
+## HTTP 原始波形采集（signal-waveform-fetch）
+
+新增独立子包 `signal_spectrum.waveform`：通过真实 HTTP 把测量设备的一次完整原始采集
+保存为可追溯数据包，不读写 Welch 工作台，不产生 writes、seal、PSD 或请求代际状态。
+协议、一致性通道、检查点与故障注入见 [波形采集契约](docs/waveform-fetch-contract.md)。
+
+```sh
+# 终端 1：离线、真实 TCP/HTTP 的设备模拟器（也支持 --no-lease 的仅 ETag 设备）
+PYTHONPATH=src python3 -m signal_spectrum.waveform.device_cli --port 18080 --points 64
+# 终端 2：采集并发布一个完整验真的数据包
+PYTHONPATH=src python3 -m signal_spectrum.waveform.cli \
+  --url http://127.0.0.1:18080 --output run/wave-pkg
+# 可选：导出能被旧 signal-spectrum 直接消费的 analysis.json（前 M 个标定值）
+PYTHONPATH=src python3 -m signal_spectrum.waveform.cli \
+  --url http://127.0.0.1:18080 --output run/wave-pkg-analysis \
+  --channel 0 --analysis-count 4
+# 进程终止后用同一输出路径续传
+PYTHONPATH=src python3 -m signal_spectrum.waveform.cli \
+  --url http://127.0.0.1:18080 --output run/wave-pkg --resume
+```
+
+- 两种可证一致的通道：仅 ETag 设备对每块做 `If-Match` 条件读取并在收尾再核 meta；
+  lease 设备用 `POST /leases` 固定不可变快照，过期（410）则整体重启，绝不拼接新身份。
+- 每块严格核对 206/Content-Range/ETag/字节数，流式哈希并比对设备宣告的全量 SHA256；
+  弱 ETag、200 忽略 Range、错区间、截断、超长、身份冲突都不能发布成功包。
+- 解码支持 int16/uint16/float32 与大小端、point-major 多通道交错与逐点标定；工作缓冲
+  上限 1 MiB，不把完整载荷或完整通道数组装入内存；原始数据上限 256 MiB。
+- 暂存目录 `DIR.staging` 与 fsync 检查点绑定 URL、完整 meta、ETag、偏移与前缀 SHA，
+  支持 `--resume`；篡改已承诺前缀直接报错，已发布目录拒绝覆盖，失败只保留可辨识暂存。
+- 预算参数（`SIGSPECTRUM_WF_BLOCK_RETRIES`、`SIGSPECTRUM_WF_RESTARTS`、
+  `SIGSPECTRUM_WF_TIMEOUT`）与崩溃钩子（`SIGSPECTRUM_WF_CRASH`）公开且有限，不存在
+  无限重试。
+- 离线演示（真实 TCP/HTTP，无 mock）：
+  `PYTHONPATH=src python3 examples/waveform_fetch_demo.py`。
+
 ## 当前能力和样例
 # Bounded one-sided real-signal spectrum v1
 
