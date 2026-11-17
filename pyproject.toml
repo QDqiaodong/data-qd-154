@@ -9,5 +9,6 @@ requires-python = ">=3.11"
 dependencies = []
 [project.scripts]
 signal-spectrum = "signal_spectrum.cli:main"
+signal-spectrum-workbench = "signal_spectrum.workbench.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]

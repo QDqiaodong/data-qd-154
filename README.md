@@ -27,6 +27,32 @@ python3 -m venv .venv
 src/signal_spectrum/model.py 为业务模型，相关算法模块独立组织；common.py 提供受限JSON及报告发布，
 cli.py 衔接数据链路。fixtures 为明确自制样例，代码与样例采用MIT许可。
 
+## 连续采样 Welch 工作台（signal-spectrum-workbench）
+
+旧离线命令保持不变；另提供 SQLite 持久化工作台，支持现场采样更正、封口与崩溃恢复，
+仅用标准库。数据契约见 [工作台契约](docs/workbench-contract.md)。
+
+```sh
+.venv/bin/signal-spectrum-workbench init  --db run/wb.db --config fixtures/workbench/config.json --report run/wb-report.json
+.venv/bin/signal-spectrum-workbench apply --db run/wb.db --source fixtures/workbench/request-01.json
+.venv/bin/signal-spectrum-workbench apply --db run/wb.db --source fixtures/workbench/request-02.json
+.venv/bin/signal-spectrum-workbench status --db run/wb.db
+```
+
+- 样本按非负绝对索引保存数值或删除标记（`null`）；`seal` 单调推进并冻结样本与缺口，
+  封口后的写入整批拒绝、整批回滚；`horizon` 是写入高水位与 seal 的最大值且不回退。
+- 窗起点 `s=mH`，仅列 `s+N<=horizon` 的整窗，逐窗给出 `complete/gap` 与 `sealed/open`；
+  缺口窗不补零、不进平均。`live_psd` 平均全部完整窗，`sealed_psd` 只平均封口完整窗，
+  无合格窗时为 `null`。
+- 每个全新接受的请求使 `generation` 加一；请求身份是源文件完整字节 SHA256，同 ID 同字节
+  重试不加代，同 ID 异字节拒绝。校验失败退出 2 且不动样本/前沿/报告。
+- 接受请求先在单个 SQLite 事务内提交（含该代完整报告文本），再原子替换报告文件并确认
+  `published_generation`。提交与替换之间、替换与确认之间的进程终止都由下一条命令自动
+  恢复，恢复只依赖数据库、不依赖原请求文件；`status` 分列 `committed_generation`、
+  `published_generation` 与 `pending`，恢复失败时如实报待发布并退出 2。
+- 可运行的故障注入与恢复/重试演示：`PYTHONPATH=src python3 examples/workbench_recovery_demo.py`
+  （测试钩子 `SIGSPECTRUM_WB_CRASH=after_commit|after_replace`）。
+
 ## 当前能力和样例
 # Bounded one-sided real-signal spectrum v1
 

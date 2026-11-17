@@ -1,0 +1,7 @@
+{
+  "request_id": "wb-demo-03-delete-4",
+  "writes": [
+    {"index": 4, "value": null}
+  ],
+  "seal": 2
+}

@@ -1,0 +1,7 @@
+{
+  "request_id": "wb-demo-02-correct-3",
+  "writes": [
+    {"index": 3, "value": -2}
+  ],
+  "seal": 2
+}

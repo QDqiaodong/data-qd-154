@@ -1,0 +1,7 @@
+{
+  "sample_rate": 8,
+  "frame_size": 4,
+  "hop": 2,
+  "window": "rectangular",
+  "remove_mean": true
+}
