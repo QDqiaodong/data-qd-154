@@ -141,6 +141,29 @@ PYTHONPATH=src python3 examples/clock_join_demo.py
   合计 ≤1 GiB；`report.json`/`events.ndjson` 全部验证完成后才原子发布，已有输出
   目录拒绝覆盖。最多 32 来源、512 锚点、128 束，峰值 RSS ≤192 MiB。
 
+## 参考台阶校准（signal-calibration）
+
+新增独立子包 `signal_spectrum.calibration`：仅凭一次参考台阶试验和包内各通道的
+实测响应，为每个通道分别建立升程与降程校准曲线，并判断校准是否合格、将来的
+读数能否唯一确定参考值。只消费完整本地包（`manifest.json` + 验真 `raw.bin`），
+不连接设备、不读 `samples.ndjson`、不改动源包或既有命令。契约见
+[参考台阶校准契约](docs/calibration-contract.md)。
+
+```sh
+signal-calibration --package DIR --steps STEPS.json --certificate CERT.json
+# 离线可运行示例（临时目录内造包与试验并发布证书）
+PYTHONPATH=src python3 examples/calibration_demo.py
+```
+
+- STEPS 的 `steps` 按 `start` 排序后必须无缝分割 `[0, points)`，至少三个不同
+  参考值，每值恰有一个 `up` 段和一个 `down` 段；`readings` 可为空。
+- 每通道按绝对样本索引流式累计台阶均值（不保留完整波形或通道），以基线解码的
+  精确 binary64 值做**精确有理数**累加；保序拟合、线性插值、反解与容差比较
+  全程精确，任何正间隙都不会被 epsilon 抹平。
+- 反解只在曲线域内、不外包；方向未知时合并两条曲线的解，只合并相交或端点相接
+  的闭区间，保留空隙与平台两端。证书用约分 `{num, den}`，重排 STEPS 数组不改变
+  证书字节；通道不合格仍照常给出诊断并退出 0，失败退出 2 并保留旧证书。
+
 ## 当前能力和样例
 # Bounded one-sided real-signal spectrum v1
 

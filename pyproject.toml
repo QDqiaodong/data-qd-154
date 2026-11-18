@@ -14,5 +14,6 @@ signal-waveform-fetch = "signal_spectrum.waveform.cli:main"
 signal-waveform-device = "signal_spectrum.waveform.device_cli:main"
 signal-excursions = "signal_spectrum.excursions.cli:main"
 signal-clock-join = "signal_spectrum.clockjoin.cli:main"
+signal-calibration = "signal_spectrum.calibration.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
