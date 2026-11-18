@@ -164,6 +164,33 @@ PYTHONPATH=src python3 examples/calibration_demo.py
   的闭区间，保留空隙与平台两端。证书用约分 `{num, den}`，重排 STEPS 数组不改变
   证书字节；通道不合格仍照常给出诊断并退出 0，失败退出 2 并保留旧证书。
 
+## 多通道波形重采样（signal-resample）
+
+新增独立子包 `signal_spectrum.resample`：把一个已验真的完成态多通道波形包
+重采样到新的共同采样时间网格 `t=m/target_rate`，产出逐通道派生数据集，供需要
+把不同采样设备数据放到同一时间轴上的离线分析流程使用。不连网、不读
+`samples.ndjson`、不改写输入，既有命令接口与输出保持不变。契约见
+[重采样契约](docs/resample-contract.md)。
+
+```sh
+signal-resample --input run/wave-pkg --target-rate 16000 --dest run/wave-16k
+# 离线可运行示例（临时目录内造 48 kHz 包并降到 16 kHz）
+PYTHONPATH=src python3 examples/resample_demo.py
+```
+
+- 复用固定基线包验真（manifest 十二字段、`meta_sha256` 自洽指纹、raw
+  长度/SHA256、端序/交错/scale-offset），符号链接 manifest/raw 拒绝。
+- 输出时间点固定为全局 `t=m/Ft`，源坐标 `m*Fs/Ft` 用约分整数比
+  `p=Ft/g`、`q=Fs/g` 直接计算，禁止浮点相位累加；只保留半径 16 的完整核窗口
+  落在源范围内的点，记录首个 `m`、点数与逐点源坐标范围。
+- 每通道独立应用对称 Blackman 窗化 sinc（`fc=0.5*min(1,Ft/Fs)`），逐输出点
+  按核权重归一化；相位权重按固定预算缓存，`p` 过大时逐点计算，绝不无界分配。
+- 输出恰含 `samples.f64le`（point-major little-endian float64 标定值）与
+  独立 `derived-waveform` schema 的 `lineage.json`（逐字节确定）；全部写完并
+  复核 `output_sha256` 后才原子发布，已有目标拒绝覆盖。
+- 流式解码，每通道仅保留 `2R+1` 邻域与定长输出块；输出 ≤5,000,000 点且
+  ≤640 MiB，峰值 RSS ≤96 MiB（240 MiB 合成载荷子进程实测约 23 MiB）。
+
 ## 当前能力和样例
 # Bounded one-sided real-signal spectrum v1
 
