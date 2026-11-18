@@ -20,18 +20,14 @@ atomic rename only after every source verified and every index row
 committed; a failed build removes its staging directory and never leaves a
 queryable half-product behind.
 """
-import array
 import hashlib
 import json
-import math
 import os
 import shutil
 import sqlite3
 import struct
-import sys
 from pathlib import Path
 
-from ..waveform import protocol as wp
 from .archive import (
     ARCHIVE_VERSION,
     CATALOG_NAME,
@@ -45,17 +41,16 @@ from .archive import (
     values_file_name,
 )
 from .errors import ExcursionError
-from .manifest import (
-    MANIFEST_NAME,
-    RAW_NAME,
-    parse_manifest_bytes,
-    validate_manifest,
+from .manifest import validate_manifest
+from .package import (
+    calibrate_channel,
+    check_raw_path,
+    iter_source_chunks,
+    read_manifest,
 )
 from .sources import MAX_RAW_TOTAL_BYTES, load_sources
 
-_READ_CHUNK = 1024 * 1024
 _FLUSH_VALUES = 8192  # multiple of LEAF_SIZE; per-channel buffer bound
-_TYPECODES = {"int16": "h", "uint16": "H", "float32": "f"}
 
 
 def _fail(message):
@@ -71,30 +66,6 @@ def _fsync_dir(path):
             os.close(descriptor)
     except OSError:
         pass
-
-
-def _read_manifest(package_dir):
-    manifest_path = package_dir / MANIFEST_NAME
-    if manifest_path.is_symlink():
-        _fail("manifest is a symbolic link: %s" % manifest_path)
-    if not manifest_path.is_file():
-        _fail("package has no manifest.json: %s" % package_dir)
-    try:
-        with open(manifest_path, "rb") as stream:
-            raw = stream.read(65537)
-    except OSError as error:
-        raise ExcursionError("cannot read manifest: " + str(error)) from None
-    manifest_sha = hashlib.sha256(raw).hexdigest()
-    return parse_manifest_bytes(raw), manifest_sha
-
-
-def _check_raw_path(package_dir):
-    raw_path = package_dir / RAW_NAME
-    if raw_path.is_symlink():
-        _fail("raw.bin is a symbolic link: %s" % raw_path)
-    if not raw_path.is_file():
-        _fail("package has no raw.bin: %s" % package_dir)
-    return raw_path
 
 
 class _ChannelSink:
@@ -168,87 +139,16 @@ class _ChannelSink:
         return self._hasher.hexdigest()
 
 
-def _calibrate(arr, channel_index, channel_count, spec, dtype, point_base):
-    """Calibrate one channel out of an interleaved native-order array.
-
-    Produces exactly the decoder's per-point ``raw*scale + offset`` values;
-    non-finite raw or calibrated values reject the whole build.
-    """
-    values = arr[channel_index::channel_count]
-    if dtype == "float32":
-        # NaN defeats min/max, so raw float32 values are checked one by one.
-        if not all(map(math.isfinite, values)):
-            for rel, raw_value in enumerate(values):
-                if not math.isfinite(raw_value):
-                    _fail("non-finite raw value at index %d channel %d"
-                          % (point_base + rel, channel_index))
-    calibrated = [raw * spec["scale"] + spec["offset"] for raw in values]
-    if calibrated:
-        low = min(calibrated)
-        high = max(calibrated)
-        if not (math.isfinite(low) and math.isfinite(high)):
-            for rel, value in enumerate(calibrated):
-                if not math.isfinite(value):
-                    _fail("non-finite calibrated value at index %d channel %d"
-                          % (point_base + rel, channel_index))
-    return calibrated
-
-
 def _decode_and_index(manifest, raw_path, sinks):
     """Stream raw.bin once: verify length/SHA, calibrate, feed the sinks."""
     channel_specs = manifest["channels"]
     channel_count = len(channel_specs)
-    width = wp.WIDTH[manifest["dtype"]]
-    frame_size = channel_count * width
-    typecode = _TYPECODES[manifest["dtype"]]
-    swap = (manifest["byte_order"] == "little") != (sys.byteorder == "little")
-
-    hasher = hashlib.sha256()
-    total = 0
-    points = 0
-    carry = bytearray()
-    try:
-        stream = open(raw_path, "rb")
-    except OSError as error:
-        raise ExcursionError("cannot read raw.bin: " + str(error)) from None
-    with stream:
-        while True:
-            try:
-                chunk = stream.read(_READ_CHUNK)
-            except OSError as error:
-                raise ExcursionError(
-                    "cannot read raw.bin: " + str(error)) from None
-            if not chunk:
-                break
-            hasher.update(chunk)
-            total += len(chunk)
-            carry.extend(chunk)
-            usable = len(carry) - (len(carry) % frame_size)
-            if usable == 0:
-                continue
-            block = bytes(carry[:usable])
-            del carry[:usable]
-            arr = array.array(typecode, block)
-            if swap:
-                arr.byteswap()
-            frames = usable // frame_size
-            for channel_index, spec in enumerate(channel_specs):
-                calibrated = _calibrate(arr, channel_index, channel_count,
-                                        spec, manifest["dtype"], points)
-                sinks[channel_index].feed(calibrated)
-            points += frames
-    if carry:
-        _fail("raw.bin has %d trailing bytes that do not form a whole frame"
-              % len(carry))
-    if total != manifest["raw_bytes"]:
-        _fail("raw.bin length %d does not match manifest raw_bytes %d"
-              % (total, manifest["raw_bytes"]))
-    if hasher.hexdigest() != manifest["raw_sha256"]:
-        _fail("raw.bin SHA256 does not match manifest raw_sha256; "
-              "refusing to archive an unverified payload")
-    if points != manifest["points"]:
-        _fail("decoded %d points but manifest declares %d"
-              % (points, manifest["points"]))
+    for point_base, _, arr in iter_source_chunks(manifest, raw_path):
+        for channel_index, spec in enumerate(channel_specs):
+            calibrated = calibrate_channel(
+                arr, channel_index, channel_count, spec,
+                manifest["dtype"], point_base)
+            sinks[channel_index].feed(calibrated)
 
 
 def _process_source(connection, staging, source_seq, source_id, manifest,
@@ -305,9 +205,9 @@ def build_archive(sources_path, archive_dir):
     plans = []
     total_raw = 0
     for source_id, package_dir in entries:
-        manifest_obj, manifest_sha = _read_manifest(package_dir)
+        manifest_obj, manifest_sha = read_manifest(package_dir)
         manifest = validate_manifest(manifest_obj)
-        raw_path = _check_raw_path(package_dir)
+        raw_path = check_raw_path(package_dir)
         total_raw += manifest["raw_bytes"]
         if total_raw > MAX_RAW_TOTAL_BYTES:
             _fail("aggregate raw_bytes of all sources exceeds 1 GiB")

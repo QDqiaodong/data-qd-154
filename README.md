@@ -114,6 +114,33 @@ PYTHONPATH=src python3 -m signal_spectrum.excursions.cli query \
 - 最多 32 个源包、合计 ≤1 GiB；build 与 query 峰值 RSS ≤192 MiB；成功退出 0，
   非法输入、源校验、档案损坏/版本不支持或 I/O 失败退出 2。
 
+## 多仪器时钟拼接（signal-clock-join）
+
+新增独立子包 `signal_spectrum.clockjoin`：把多个已发布的完整波形包与仪器间
+校时锚点连接成可追溯的事件拼接数据集。各仪器采样起点无共同墙钟，工具用**精确
+有理数**在“全部基础锚点 + 本束全部关系”的联合约束图上判定整束是否使用同一组
+来源偏移；不以各仪器独立误差区间的重叠冒充共同可行。不读 `samples.ndjson`、
+不连接设备、不改动源包与既有命令。契约见
+[时钟拼接契约](docs/clockjoin-contract.md)。
+
+```sh
+# JOB.json：reference/sources/anchors/bundles（相对 package 路径按 JOB 目录解释）
+signal-clock-join --source JOB.json --output run/joined
+# 离线可运行示例（临时目录内造三包并发布）
+PYTHONPATH=src python3 examples/clock_join_demo.py
+```
+
+- 每个候选束在**同一组**来源偏移下判定；逐关系可行不等于整束可行。不可行束
+  输出**可机验负环**（真实闭环、逐边权重与原始约束一致、总权重严格为负）；
+  可行束输出逐来源同时达到可行下界的最小偏移向量，并区分 `guaranteed`
+  （基础锚点已蕴含全部关系）与 `conditional`。
+- 基础锚点矛盾或任一来源相对参考无有限上下界属整次输入错误（退出 2、不发布）；
+  束不相容是正常结果，不阻止其他束产出。
+- 复用固定基线包验真与流式解码（manifest 十二字段、`meta_sha256` 自洽指纹、
+  raw 长度/SHA256、端序/交错/scale-offset），manifest ≤64 KiB、单包 ≤256 MiB、
+  合计 ≤1 GiB；`report.json`/`events.ndjson` 全部验证完成后才原子发布，已有输出
+  目录拒绝覆盖。最多 32 来源、512 锚点、128 束，峰值 RSS ≤192 MiB。
+
 ## 当前能力和样例
 # Bounded one-sided real-signal spectrum v1
 
